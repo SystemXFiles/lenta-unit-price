@@ -21,8 +21,12 @@
 
     const BADGE_CLASS = 'lup-unit-price-badge';
     const BADGE_PDP_CLASS = 'lup-unit-price-badge--pdp';
+    const BADGE_ROW_CLASS = 'lup-unit-price-row';
     const STYLE_ID = 'lup-style';
     const THROTTLE_MS = 250;
+    const MONEY_FORMATTER = new Intl.NumberFormat('ru-RU', {
+        maximumFractionDigits: 2
+    });
 
     const SELECTORS = {
         cards: 'lu-product-card, a.product-card, .product-card',
@@ -53,6 +57,10 @@
 .${BADGE_CLASS}.${BADGE_PDP_CLASS} {
     margin-top: 20px;
 }
+.${BADGE_ROW_CLASS} {
+    display: block;
+    width: 100%;
+}
 `;
 
     function installStyles() {
@@ -64,22 +72,42 @@
         document.head.appendChild(style);
     }
 
-    function toText(node) {
-        return (node?.textContent || '').replace(/\s+/g, ' ').trim();
+    function toText(node, visibleOnly = false) {
+        const raw = visibleOnly ? (node?.innerText || '') : (node?.textContent || '');
+        return raw.replace(/\s+/g, ' ').trim();
     }
 
     function formatMoney(value) {
-        return Math.round(value).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        return MONEY_FORMATTER.format(value);
+    }
+
+    function parseNumeric(text) {
+        const cleaned = (text || '').replace(/[^\d.,]/g, '');
+        if (!cleaned) return null;
+
+        const lastComma = cleaned.lastIndexOf(',');
+        const lastDot = cleaned.lastIndexOf('.');
+        const splitIndex = Math.max(lastComma, lastDot);
+
+        let normalized = '';
+
+        if (splitIndex === -1) {
+            normalized = cleaned.replace(/[^\d]/g, '');
+        } else {
+            const intPart = cleaned.slice(0, splitIndex).replace(/[^\d]/g, '');
+            const fracPart = cleaned.slice(splitIndex + 1).replace(/[^\d]/g, '');
+            normalized = fracPart ? `${intPart}.${fracPart}` : intPart;
+        }
+
+        const parsed = parseFloat(normalized);
+        return Number.isFinite(parsed) ? parsed : null;
     }
 
     function parsePrice(text) {
         if (!text) return null;
 
-        const money = text.match(/(\d[\d\s.,]*)\s*(?:₽|руб)/i) || text.match(/(\d[\d\s.,]*)/);
-        const raw = money ? money[1] : text;
-        const parsed = parseFloat(raw.replace(/\s+/g, '').replace(',', '.'));
-
-        return Number.isFinite(parsed) ? parsed : null;
+        const money = text.match(/(\d[\d\s.,]*)\s*(?:₽|руб)/i);
+        return parseNumeric(money ? money[1] : text);
     }
 
     function normalizeUnit(value, unitRaw = '') {
@@ -140,6 +168,24 @@
         return { value: 1, label: match[1].toLowerCase() };
     }
 
+    function parseCounterPieces(root) {
+        const area = root.querySelector(
+            '.product-card-purchase, [class*="product-card-purchase"], .counter-and-favorite-buttons, .product-base-info_controls'
+        ) || root;
+
+        const nodes = area.querySelectorAll('*');
+        for (const node of nodes) {
+            const text = toText(node);
+            const match = text.match(/^(\d+(?:[.,]\d+)?)\s*шт$/i);
+            if (!match) continue;
+
+            const count = parseFloat(match[1].replace(',', '.'));
+            if (Number.isFinite(count) && count > 0) return count;
+        }
+
+        return 1;
+    }
+
     function resolveUnit(titleText, priceText) {
         return parseUnitFromTitle(titleText) || parseUnitFromPrice(priceText);
     }
@@ -185,10 +231,13 @@
         if (type === 'card') {
             const purchaseBlock = priceContainer.closest('.product-card-purchase, [class*="product-card-purchase"]');
             if (purchaseBlock) {
-                const anchor = purchaseBlock.querySelector(
-                    'lu-product-card-counter-manager, lu-product-counter-manager'
-                );
-                return { host: purchaseBlock, anchor };
+                let row = purchaseBlock.querySelector(`:scope > .${BADGE_ROW_CLASS}`);
+                if (!row) {
+                    row = document.createElement('div');
+                    row.className = BADGE_ROW_CLASS;
+                    purchaseBlock.appendChild(row);
+                }
+                return { host: row, anchor: null };
             }
         }
 
@@ -233,7 +282,7 @@
         if (!priceContainer) return;
 
         const priceSource = root.querySelector(SELECTORS.mainPrice) || priceContainer;
-        const priceText = toText(priceSource);
+        const priceText = toText(priceSource, true);
         const weightText = toText(root.querySelector(SELECTORS.weight));
         const fallbackTitleText = toText(root.querySelector(titleSelector));
         const titleText = weightText || fallbackTitleText;
@@ -241,14 +290,18 @@
 
         const price = parsePrice(priceText);
         const unit = resolveUnit(titleText, priceText);
+        const pieces = parseCounterPieces(root);
 
         const existingBadge = root.querySelector(`.${BADGE_CLASS}`);
         if (!price || !unit || unit.value <= 0) {
             existingBadge?.remove();
+            const row = root.querySelector(`.${BADGE_ROW_CLASS}`);
+            if (row && row.childElementCount === 0) row.remove();
             return;
         }
 
-        const badgeText = `${formatMoney(price / unit.value)} ₽/${unit.label}`;
+        const unitBasePrice = price / pieces;
+        const badgeText = `${formatMoney(unitBasePrice / unit.value)} ₽/${unit.label}`;
         const badge = existingBadge || document.createElement('div');
 
         badge.className = type === 'pdp' ? `${BADGE_CLASS} ${BADGE_PDP_CLASS}` : BADGE_CLASS;
@@ -309,13 +362,13 @@
             for (const node of mutation.addedNodes) {
                 touched += 1;
                 if (!(node instanceof HTMLElement)) return false;
-                if (!node.classList.contains(BADGE_CLASS)) return false;
+                if (!node.classList.contains(BADGE_CLASS) && !node.classList.contains(BADGE_ROW_CLASS)) return false;
             }
 
             for (const node of mutation.removedNodes) {
                 touched += 1;
                 if (!(node instanceof HTMLElement)) return false;
-                if (!node.classList.contains(BADGE_CLASS)) return false;
+                if (!node.classList.contains(BADGE_CLASS) && !node.classList.contains(BADGE_ROW_CLASS)) return false;
             }
         }
 
