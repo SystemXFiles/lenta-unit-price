@@ -7,8 +7,8 @@
 // @icon         https://lenta.com/favicon.ico
 // @homepageURL  https://github.com/SystemXFiles/lenta-unit-price
 // @supportURL   https://github.com/SystemXFiles/lenta-unit-price/issues
-// @updateURL    https://raw.githubusercontent.com/SystemXFiles/lenta-unit-price/master/lenta_unit_price.user.js
-// @downloadURL  https://raw.githubusercontent.com/SystemXFiles/lenta-unit-price/master/lenta_unit_price.user.js
+// @updateURL    https://raw.githubusercontent.com/SystemXFiles/lenta-unit-price/main/lenta_unit_price.user.js
+// @downloadURL  https://raw.githubusercontent.com/SystemXFiles/lenta-unit-price/main/lenta_unit_price.user.js
 // @match        https://lenta.com/*
 // @grant        none
 // ==/UserScript==

@@ -22,7 +22,7 @@ Userscript для `lenta.com`, который добавляет на карто
    - **Violentmonkey** или **Greasemonkey** (Firefox)
 2. Установите скрипт:
 
-[![УСТАНОВИТЬ](https://img.shields.io/badge/УСТАНОВИТЬ-СКРИПТ-success?style=for-the-badge&logo=tampermonkey)](https://github.com/SystemXFiles/lenta-unit-price/raw/refs/heads/master/lenta_unit_price.user.js)
+[![УСТАНОВИТЬ](https://img.shields.io/badge/УСТАНОВИТЬ-СКРИПТ-success?style=for-the-badge&logo=tampermonkey)](https://github.com/SystemXFiles/lenta-unit-price/raw/master/lenta_unit_price.user.js)
 
 ## Использование
 
