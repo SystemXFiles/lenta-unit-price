@@ -16,119 +16,349 @@
 (function () {
     'use strict';
 
-    // Стиль: Желтый стикер (яркий и заметный)
-    const STYLES = {
-        backgroundColor: '#FFEB3B', // Желтый фон
-        color: '#D50000',           // Красный текст
-        fontSize: '13px',           // Читаемый размер
-        fontWeight: '700',          // Жирный
-        padding: '2px 6px',         // Отступы внутри плашки
-        borderRadius: '6px',        // Скругление
-        marginTop: '4px',           // Отступ сверху
-        display: 'block',           // Блочный элемент, чтобы переносился на новую строку
-        width: 'fit-content',       // Ширина по содержимому
-        lineHeight: '1',
-    };
+    if (window.__lupUnitPriceLoaded) return;
+    window.__lupUnitPriceLoaded = true;
+
+    const BADGE_CLASS = 'lup-unit-price-badge';
+    const BADGE_PDP_CLASS = 'lup-unit-price-badge--pdp';
+    const STYLE_ID = 'lup-style';
+    const THROTTLE_MS = 250;
 
     const SELECTORS = {
-        card: 'lu-product-card',
-        priceBlock: '.product-price', // Куда вставляем
-        mainPrice: '.main-price',     // Откуда берем цену
-        weight: '.card-name_package', // Вес (приоритет 1)
-        title: '.lu-product-card-name' // Вес (приоритет 2)
+        cards: 'lu-product-card, a.product-card, .product-card',
+        nativeCard: 'lu-product-card',
+        priceBlock: '.product-price, [class*="product-price"]',
+        mainPrice: '.main-price, [class*="main-price"]',
+        title: '.lu-product-card-name, [class*="product-card-name"]',
+        weight: '.card-name_package, [class*="package"]',
+        pdpRoot: '.right-column'
     };
 
-    // Форматирование: 1 200
-    function formatMoney(num) {
-        return Math.round(num).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+    const BADGE_CSS = `
+.${BADGE_CLASS} {
+    background: #FFEB3B;
+    color: #D50000;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+    border-radius: 6px;
+    padding: 2px 6px;
+    margin-top: 6px;
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    align-self: flex-start;
+    pointer-events: none;
+}
+.${BADGE_CLASS}.${BADGE_PDP_CLASS} {
+    margin-top: 20px;
+}
+`;
+
+    function installStyles() {
+        if (document.getElementById(STYLE_ID)) return;
+
+        const style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent = BADGE_CSS;
+        document.head.appendChild(style);
     }
 
-    function parsePrice(str) {
-        if (!str) return null;
-        const cleaned = str.replace(/[^\d.,]/g, '').replace(',', '.');
-        return parseFloat(cleaned);
+    function toText(node) {
+        return (node?.textContent || '').replace(/\s+/g, ' ').trim();
     }
 
-    // Универсальная логика (как в v6)
-    function parseDynamicUnit(str) {
-        if (!str) return null;
-
-        // Ищем: Число + Текст
-        const match = str.trim().match(/^(\d+(?:[.,]\d+)?)\s*([а-яa-z.]+)/i);
-        const looseMatch = str.match(/(\d+(?:[.,]\d+)?)\s*([а-яa-z.]+)/i);
-        const bestMatch = match || looseMatch;
-
-        if (!bestMatch) return null;
-
-        let val = parseFloat(bestMatch[1].replace(',', '.'));
-        let unitRaw = bestMatch[2].toLowerCase();
-
-        if (unitRaw === '%') return null; // Игнорируем проценты
-
-        // Нормализация
-        if ((unitRaw.startsWith('г') || unitRaw === 'g') && val >= 1) {
-            val = val / 1000;
-            unitRaw = 'кг';
-        }
-        else if (unitRaw.startsWith('м') || unitRaw.startsWith('m')) {
-            val = val / 1000;
-            unitRaw = 'л';
-        }
-        else if (unitRaw.startsWith('к') || unitRaw.startsWith('k')) {
-            unitRaw = 'кг';
-        }
-        else if (unitRaw === 'л' || unitRaw === 'l') {
-            unitRaw = 'л';
-        }
-
-        return { value: val, label: unitRaw };
+    function formatMoney(value) {
+        return Math.round(value).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
     }
 
-    function addPricePerUnit(card) {
-        if (card.getAttribute('data-ppu-done')) return;
+    function parsePrice(text) {
+        if (!text) return null;
 
-        const priceContainer = card.querySelector(SELECTORS.priceBlock);
-        const priceEl = card.querySelector(SELECTORS.mainPrice);
+        const money = text.match(/(\d[\d\s.,]*)\s*(?:₽|руб)/i) || text.match(/(\d[\d\s.,]*)/);
+        const raw = money ? money[1] : text;
+        const parsed = parseFloat(raw.replace(/\s+/g, '').replace(',', '.'));
 
-        let weightSource = card.querySelector(SELECTORS.weight);
-        if (!weightSource) weightSource = card.querySelector(SELECTORS.title);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
 
-        if (!priceEl || !weightSource || !priceContainer) return;
+    function normalizeUnit(value, unitRaw = '') {
+        let amount = value;
+        let unit = unitRaw.toLowerCase();
 
-        const price = parsePrice(priceEl.textContent);
-        const unitData = parseDynamicUnit(weightSource.textContent);
+        if ((unit.startsWith('г') || unit === 'g' || unit === 'гр') && amount >= 1) {
+            return { value: amount / 1000, label: 'кг' };
+        }
 
-        if (price && unitData && unitData.value > 0) {
-            const pricePerUnit = price / unitData.value;
+        if (unit.startsWith('м') || unit.startsWith('ml')) {
+            return { value: amount / 1000, label: 'л' };
+        }
 
-            // Создаем стикер
-            const badge = document.createElement('div');
-            badge.textContent = `${formatMoney(pricePerUnit)} ₽/${unitData.label}`;
+        if (unit.startsWith('к') || unit === 'kg' || unit === 'k') {
+            return { value: amount, label: 'кг' };
+        }
 
-            Object.assign(badge.style, STYLES);
+        if (unit === 'л' || unit === 'l') {
+            return { value: amount, label: 'л' };
+        }
 
-            // Вставляем ВНУТРЬ .product-price
-            // flexWrap заставит блок перескочить на новую строку, если там Flexbox
-            priceContainer.style.flexWrap = 'wrap';
-            priceContainer.appendChild(badge);
+        if (unit.startsWith('шт') || unit === 'pc' || unit === 'pcs') {
+            return { value: amount, label: 'шт' };
+        }
 
-            card.setAttribute('data-ppu-done', 'true');
+        return { value: amount, label: unit };
+    }
+
+    function parseUnitFromTitle(text = '') {
+        if (!text) return null;
+
+        const match = text.match(/(\d+(?:[.,]\d+)?)\s*(кг|kg|к|г|гр|g|л|l|мл|ml|шт|pc|pcs)/i);
+        if (!match) return null;
+
+        const amount = parseFloat(match[1].replace(',', '.'));
+        const unitRaw = match[2];
+
+        if (!Number.isFinite(amount) || amount <= 0 || unitRaw === '%') return null;
+
+        return normalizeUnit(amount, unitRaw);
+    }
+
+    function parseUnitFromPrice(text = '') {
+        if (!text) return null;
+
+        const withAmount = text.match(/(?:\/|за\s*1)\s*(\d+(?:[.,]\d+)?)\s*(шт|кг|л)/i);
+        if (withAmount) {
+            const amount = parseFloat(withAmount[1].replace(',', '.'));
+            if (Number.isFinite(amount) && amount > 0) {
+                return { value: amount, label: withAmount[2].toLowerCase() };
+            }
+        }
+
+        const match = text.match(/(?:\/|за\s*1)\s*(шт|кг|л)/i);
+        if (!match) return null;
+
+        return { value: 1, label: match[1].toLowerCase() };
+    }
+
+    function resolveUnit(titleText, priceText) {
+        return parseUnitFromTitle(titleText) || parseUnitFromPrice(priceText);
+    }
+
+    function findPdpRoot() {
+        const fixed = document.querySelector(SELECTORS.pdpRoot);
+        if (fixed?.querySelector(SELECTORS.priceBlock)) return fixed;
+
+        const h1 = document.querySelector('h1');
+        let node = h1?.parentElement || null;
+        while (node && node !== document.body) {
+            if (node.querySelector(SELECTORS.priceBlock)) return node;
+            node = node.parentElement;
+        }
+
+        return null;
+    }
+
+    function collectContexts() {
+        const contexts = [];
+        const seen = new Set();
+
+        const add = (root, type, titleSelector) => {
+            if (!root || seen.has(root)) return;
+            seen.add(root);
+            contexts.push({ root, type, titleSelector });
+        };
+
+        document.querySelectorAll(SELECTORS.cards).forEach((card) => {
+            if (!card.matches(SELECTORS.nativeCard) && card.closest(SELECTORS.nativeCard)) return;
+            add(card, 'card', SELECTORS.title);
+        });
+
+        if (/^\/product\//i.test(window.location.pathname)) {
+            const pdpRoot = findPdpRoot();
+            if (pdpRoot?.querySelector('h1')) add(pdpRoot, 'pdp', 'h1');
+        }
+
+        return contexts;
+    }
+
+    function resolveBadgeMount(type, priceContainer) {
+        if (type === 'card') {
+            const purchaseBlock = priceContainer.closest('.product-card-purchase, [class*="product-card-purchase"]');
+            if (purchaseBlock) {
+                const anchor = purchaseBlock.querySelector(
+                    'lu-product-card-counter-manager, lu-product-counter-manager'
+                );
+                return { host: purchaseBlock, anchor };
+            }
+        }
+
+        const controlsBlock = priceContainer.closest(
+            '.product-base-info_controls, [class*="base-info_controls"], .product-card_controls, [class*="product-card_controls"]'
+        );
+
+        if (controlsBlock) {
+            const anchor = controlsBlock.querySelector(
+                'lu-product-card-counter-manager, lu-product-counter-manager, .counter-and-favorite-buttons'
+            );
+            return { host: controlsBlock, anchor };
+        }
+
+        const anchor = priceContainer.closest(
+            'lu-product-card-counter-manager, lu-product-counter-manager, lu-product-counter, lu-counter, .counter-and-favorite-buttons, .price-and-buttons'
+        ) || priceContainer;
+        const host = anchor.parentElement;
+        return host ? { host, anchor: null } : null;
+    }
+
+    function mountBadge(type, priceContainer, badge) {
+        const mount = resolveBadgeMount(type, priceContainer);
+        if (!mount) return;
+
+        const { host, anchor } = mount;
+        if (anchor && anchor.parentElement === host) {
+            if (badge.parentElement !== host || badge.previousElementSibling !== anchor) {
+                anchor.insertAdjacentElement('afterend', badge);
+            }
+            return;
+        }
+
+        if (badge.parentElement !== host || host.lastElementChild !== badge) {
+            host.appendChild(badge);
         }
     }
 
-    function processCards() {
-        const cards = document.querySelectorAll(SELECTORS.card);
-        if (cards.length > 0) {
-            cards.forEach(addPricePerUnit);
+    function updateContext(context) {
+        const { root, titleSelector, type } = context;
+        const priceContainer = root.querySelector(SELECTORS.priceBlock);
+        if (!priceContainer) return;
+
+        const priceSource = root.querySelector(SELECTORS.mainPrice) || priceContainer;
+        const priceText = toText(priceSource);
+        const weightText = toText(root.querySelector(SELECTORS.weight));
+        const fallbackTitleText = toText(root.querySelector(titleSelector));
+        const titleText = weightText || fallbackTitleText;
+        if (!titleText && !priceText) return;
+
+        const price = parsePrice(priceText);
+        const unit = resolveUnit(titleText, priceText);
+
+        const existingBadge = root.querySelector(`.${BADGE_CLASS}`);
+        if (!price || !unit || unit.value <= 0) {
+            existingBadge?.remove();
+            return;
         }
+
+        const badgeText = `${formatMoney(price / unit.value)} ₽/${unit.label}`;
+        const badge = existingBadge || document.createElement('div');
+
+        badge.className = type === 'pdp' ? `${BADGE_CLASS} ${BADGE_PDP_CLASS}` : BADGE_CLASS;
+        badge.textContent = badgeText;
+
+        mountBadge(type, priceContainer, badge);
     }
 
-    const observer = new MutationObserver((mutations) => {
-        const hasNewNodes = mutations.some(m => m.addedNodes.length > 0);
-        if (hasNewNodes) processCards();
-    });
+    function processAll() {
+        installStyles();
+        collectContexts().forEach(updateContext);
+    }
 
-    observer.observe(document.body, { childList: true, subtree: true });
+    function throttle(fn, waitMs) {
+        let lastCallAt = 0;
+        let timerId = null;
 
-    setTimeout(processCards, 1000);
+        return function throttled() {
+            const now = Date.now();
+            const remaining = waitMs - (now - lastCallAt);
+
+            if (remaining <= 0) {
+                if (timerId !== null) {
+                    clearTimeout(timerId);
+                    timerId = null;
+                }
+                lastCallAt = now;
+                fn();
+                return;
+            }
+
+            if (timerId !== null) return;
+
+            timerId = setTimeout(() => {
+                timerId = null;
+                lastCallAt = Date.now();
+                fn();
+            }, remaining);
+        };
+    }
+
+    let isProcessing = false;
+
+    const scheduleProcess = throttle(() => {
+        if (isProcessing) return;
+
+        isProcessing = true;
+        requestAnimationFrame(() => {
+            processAll();
+            isProcessing = false;
+        });
+    }, THROTTLE_MS);
+
+    function shouldIgnoreMutations(mutations) {
+        let touched = 0;
+
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                touched += 1;
+                if (!(node instanceof HTMLElement)) return false;
+                if (!node.classList.contains(BADGE_CLASS)) return false;
+            }
+
+            for (const node of mutation.removedNodes) {
+                touched += 1;
+                if (!(node instanceof HTMLElement)) return false;
+                if (!node.classList.contains(BADGE_CLASS)) return false;
+            }
+        }
+
+        return touched > 0;
+    }
+
+    function installObservers() {
+        const observer = new MutationObserver((mutations) => {
+            if (isProcessing) return;
+            if (shouldIgnoreMutations(mutations)) return;
+            scheduleProcess();
+        });
+
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    function installNavigationHooks() {
+        const patch = (methodName) => {
+            const original = history[methodName];
+            if (typeof original !== 'function') return;
+
+            history[methodName] = function (...args) {
+                const result = original.apply(this, args);
+                window.dispatchEvent(new Event('lup:locationchange'));
+                return result;
+            };
+        };
+
+        patch('pushState');
+        patch('replaceState');
+
+        window.addEventListener('popstate', () => window.dispatchEvent(new Event('lup:locationchange')));
+        window.addEventListener('hashchange', () => window.dispatchEvent(new Event('lup:locationchange')));
+        window.addEventListener('pageshow', () => window.dispatchEvent(new Event('lup:locationchange')));
+        window.addEventListener('lup:locationchange', scheduleProcess);
+    }
+
+    installObservers();
+    installNavigationHooks();
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', scheduleProcess, { once: true });
+    }
+
+    processAll();
 })();
